@@ -9,9 +9,11 @@ import sys
 input_file = sys.argv[1] if len(sys.argv) > 1 else "input.prg"
 output_file = "output.prg"
 output_html_file = "output.html"
-table_file = "table.prg"
-str_table_addr = 0xe000
-str_table_end = 0xfff0
+table_filename_template = "table_$1.prg"
+str_table_buckets = [
+    (0xe000, 0xfff0),
+    (0xa000, 0xafff)
+]
 helper_addr = 0xc2ec
 
 
@@ -512,6 +514,7 @@ class StringTracker:
         self.cur_y_pos = None
         self.x_adj = 0
         self.y_adj = 0
+        self.buckets = []
 
     def reset(self):
         self.tracked_elements = []
@@ -578,6 +581,39 @@ class StringTracker:
                 )
             self.cur_x_pos = 0  # we do know that we're in column 0 now
 
+    def fill_tables(self, check_only: bool):
+        if not check_only:
+            self.buckets = [bytearray() for bucket in str_table_buckets]
+            self.buckets[0].extend(bytearray(len(self.str_table) * 2))
+        remaining_bytes = [bucket[1] - bucket[0] + 1 for bucket in str_table_buckets]
+        remaining_bytes[0] -= len(self.str_table) * 2  # offset table goes into bucket 0
+        for i_entry in range(len(self.str_table)):
+            entry = self.str_table[i_entry]
+            for i_bucket in range(len(remaining_bytes)):
+                len_entry = len(entry)
+                if remaining_bytes[i_bucket] > len_entry:
+                    remaining_bytes[i_bucket] = remaining_bytes[i_bucket] - len_entry
+                    if not check_only:
+                        addr = str_table_buckets[i_bucket][0] + len(self.buckets[i_bucket])
+                        # print(f"String nr. {i_entry} goes to {addr:04x}")
+                        self.buckets[i_bucket].extend(entry)
+                        self.buckets[0][i_entry * 2] = addr & 255
+                        self.buckets[0][i_entry * 2 + 1] = addr >> 8
+                    entry = None
+                    break
+            if entry is not None:
+                return False  # all bucket space exhausted
+        return True
+
+    def write_tables(self):
+        self.fill_tables(check_only=False)
+        for i_bucket in range(len(self.buckets)):
+            table_filename = table_filename_template.replace("$1", f"{str_table_buckets[i_bucket][0]:04x}".lower())
+            print(f"Table {table_filename} from {str_table_buckets[i_bucket][0]:04x} to {(str_table_buckets[i_bucket][0]+len(self.buckets[i_bucket])):04x}")
+            with open(table_filename, "wb") as tablefile:
+                tablefile.write(bytearray([str_table_buckets[i_bucket][0] & 255, str_table_buckets[i_bucket][0] >> 8]))
+                tablefile.write(self.buckets[i_bucket])
+
     def flush_string(self, deinit_xy_tracking: bool = False):
         if len(self.tracked_fastcode) == 0:
             if deinit_xy_tracking:
@@ -593,14 +629,14 @@ class StringTracker:
             if len(self.str_table) >= 255:
                 print("ERROR: Available table entries exhausted")
                 return False
-            new_dst_bytes = self.total_dst_bytes + len(self.tracked_fastcode) + 2
-            if new_dst_bytes > (str_table_end - str_table_addr):
+            self.str_table.append(self.tracked_fastcode)
+            if not self.fill_tables(check_only=True):
+                self.str_table.pop()
                 print("ERROR: Table space exhausted")
                 self.reset()
                 return False
-            self.str_table.append(self.tracked_fastcode)
             i_str = len(self.str_table) - 1
-            self.total_dst_bytes = new_dst_bytes
+            self.total_dst_bytes = self.total_dst_bytes + len(self.tracked_fastcode) + 2
             print(f"Using fastcode nr. {i_str} from table")
         else:
             i_str = self.str_table.index(self.tracked_fastcode)
@@ -715,7 +751,7 @@ def crank_the_print(program: Program, branch_table: dict):
                     print(e)
                 continue
             if el.get_bytes() != b':':
-                print(f"Unhandled element: {prg_line_to_ascii(el.get_bytes())} --- {el}")
+                # print(f"Unhandled element: {prg_line_to_ascii(el.get_bytes())} --- {el}")
                 string_tracker.flush_string(deinit_xy_tracking=True)
         # end of line
         if line_contains_branch:
@@ -727,16 +763,7 @@ def crank_the_print(program: Program, branch_table: dict):
     print(f"Number of strings: {len(string_tracker.str_table)}")
     print(f"Input bytes:  {string_tracker.total_src_bytes}")
     print(f"Output bytes: {string_tracker.total_dst_bytes}")
-    print(f"Table from {str_table_addr:x} to {(str_table_addr + string_tracker.total_dst_bytes):x}")
-
-    with open(table_file, "wb") as tablefile:
-        tablefile.write(bytearray([str_table_addr & 255, (str_table_addr >> 8) & 255]))
-        off = str_table_addr + 2 * len(string_tracker.str_table)
-        for s in string_tracker.str_table:
-            tablefile.write(bytearray([off & 255, (off >> 8) & 255]))
-            off += len(s)
-        for s in string_tracker.str_table:
-            tablefile.write(s)
+    string_tracker.write_tables()
 
 
 with open(input_file, "rb") as infile:
