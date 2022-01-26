@@ -1,0 +1,72 @@
+    1 sys58692:i=0:i$=""
+  100 q=830:fora=qtoq+13:readb:pokea,b:next
+  110 data32,155,183,134,211,32,155,183,32,140,232,76,19,171
+
+  900 rem"hello
+  901 sysq,0,0,"this is crank the print."
+  902 print"it speeds up your c64 basic print"
+  903 print"which is clearly a thing in 2021."
+  904 print"ctp is a hack but it tries to be"
+  905 print"a bit clever and tries detecting"
+  906 print"strings that go together so only"
+  907 print"one sys command gets generated"
+  908 print"even for long strings such as this."
+
+ 1000 rem"convert abs non-cr lines into one string
+ 1000 sysq,28,7,"{rvon}{grn}{CBM--}{lgrn}  ";
+ 1001 sysq,28,8,"{rvon}{lgrn}{CBM--}{wht}% ";
+ 1002 sysq,28,9,"{rvon}{grn}{CBM--}{lgrn}  ";
+ 1003 inputa$
+ 1100 rem"convert abs cr lines into one string
+ 1100 sysq,20,7,"{rvon}{grn}{CBM--}{lgrn}  "
+ 1101 sysq,20,8,"{rvon}{lgrn}{CBM--}{wht}% "
+ 1102 sysq,20,9,"{rvon}{grn}{CBM--}{lgrn}  "
+ 1103 inputa$
+ 1200 rem"convert sysq+print cr lines into one string
+ 1200 sysq,0,7,"{rvon}{grn}{CBM--}{lgrn}  "
+ 1201 print"{rvon}{lgrn}{CBM--}{wht}% "
+ 1202 print"{rvon}{grn}{CBM--}{lgrn}  "
+ 1203 inputa$
+ 1300 rem"convert sysq+print non-cr lines into one string
+ 1300 sysq,0,7,"concatstr1...";
+ 1301 print"str2...";
+ 1302 print"str3...";
+ 1303 inputa$
+ 1400 rem"convert three simple prints into two strings
+ 1401 print"you enter the forest."
+ 1402 print"the stars align."
+ 1403 print"the world ends."
+ 1404 inputa$
+ 1500 rem"handle variable sysq correctly
+ 1501 sysq,i,i,"* i/i";
+ 1502 print" plus another str"
+ 1503 inputa$
+ 1600 rem"handle exceptions correctly
+ 1601 sysq,0,0,"{home}do not convert this"
+ 1602 print"* 0/11 but do convert this"
+ 1603 inputa$
+ 1700 rem"test more exceptions
+ 1701 sysq,0,17,"* 0/17"
+ 1702 printi$"* 0/18"
+ 1703 inputa$
+ 1800 rem"even more exceptions
+ 1801 sysq,2,i+2,"* 2/2"
+ 1802 sysq,3,i+3,"* 3/3"
+ 1900 rem"jump
+ 1901 sysq,3,24,"* at 3/24";
+ 1902 sysq,5,5,"* at 5/5";
+ 1903 inputa$
+
+ 1999 ti$="000000":fori=1to20
+ 2000 sysq,4,4+(iand3),"{yel}* {grn}{$a0}{rvon}{SHIFT-POUND}M{CBM-POUND}N{rvof}{CBM-F}{gry1}{CBM-D}""{down}{left}{left}{left}{left}{left}{left}{left}{left}{left}";
+ 2010 print"{yel}B {orng}{CBM-*}{grn}{CBM-+}{lgrn}W{rvon}{grn}{CBM-+}{rvof}{lgrn}W{orng}{SHIFT-POUND} {rvon}{brn} {grn}{CBM-C}{rvof}""{down}{left}{left}{left}{left}{left}{left}{left}{left}{left}{left}{left}";
+ 2020 print"{yel}VC*{rvon}{grn}{CBM-J}{rvof}{wht}{CBM-D}{rvon}{grn}{CBM-POUND}{rvof}{wht}{CBM-F}{grn}{CBM-G} {rvon}{CBM-J}{gry3}M{CBM-*}{rvof}""{down}{left}{left}{left}{left}{left}{left}{left}{left}{left}{left}{left}{left}";
+ 2030 print"{yel}B {rvon}{orng}{SHIFT-POUND}{rvof}{rvon}{CBM-+}{grn}{CBM--} {rvof}{orng}{CBM-+}{rvon}{orng}{CBM-*}{grn}{SHIFT-POUND}{rvof}{SHIFT-POUND}{gry3}{CBM-*}{rvon}M{CBM-*}{rvof}""{down}{left}{left}{left}{left}{left}{left}{left}{left}{left}{left}{left}{left}{left}";
+ 2040 print"{yel}* {rvon}{grn} {orng}{SHIFT-+}{CBM-R}{CBM-R}{SHIFT-+}{grn} {rvof}{SHIFT-POUND}  {gry3}{CBM-*}{rvon} ""{down}{left}{left}{left}{left}{left}{left}{left}{left}{left}{left}{left}{left}{left}";
+ 2050 print"{rvon}{brn} {rvof}{grn}{rvon}{SHIFT-POUND}{rvof}{SHIFT-POUND}{gry2}{rvon}V{gry3}VV{gry2}V{rvof}{gry1}{CBM-V}""{down}{left}{left}{left}{left}{left}{left}{left}{left}";
+ 2060 print"{rvon}{grn}{CBM-Q}{rvof}{SHIFT-POUND}{gry2}{rvon}{SHIFT-POUND}{gry3}{CBM-+}{orng}{SHIFT--}{SHIFT--}{gry3}{CBM-+}{gry2}{CBM-*}""{down}{left}{left}{left}{left}{left}{left}{left}{left}";
+ 2070 print"{rvon}{brn}{CBM-K}{rvof}{CBM-J}{gry1}{CBM-+}{rvon}{grn}{CBM-H}{orng}{CBM-POUND}{CBM-POUND}{grn}{CBM-M}{rvof}{gry1}{CBM--}""{down}{left}{left}{left}{left}{left}{left}{left}{left}";
+ 2080 print"{brn}{CBM-L}{CBM-J} {rvon}{grn}{CBM--}{rvof}  {rvon}{CBM--}""{down}{left}{left}{left}{left}{left}{left}";
+ 2090 print"{rvon}{brn}{CBM-L}{rvof}{rvon}{grn}{SHIFT-POUND}{CBM-POUND}{rvof}  {rvon}{CBM-POUND}{CBM-*}{rvof}";
+ 2100 nexti:print"{home}{down}fast sec per draw: ";:print (ti/60)/20
+ 2110 rem

@@ -1,0 +1,751 @@
+#!/usr/bin/env python3
+
+# Crank the PRINT!
+# Because in 2022, the C64 PRINT needs a speed update.
+# https://github.com/c1570/CrankThePRINT
+
+import sys
+
+input_file = sys.argv[1] if len(sys.argv) > 1 else "input.prg"
+output_file = "output.prg"
+output_html_file = "output.html"
+table_file = "table.prg"
+str_table_addr = 0xe000
+str_table_end = 0xfff0
+helper_addr = 0xc2ec
+
+
+def line_whitelisted(number):
+    return (number < 502 or number > 532) and (number not in [210])
+
+
+TOKENS = ["END", "FOR", "NEXT", "DATA", "INPUT", "INPUT#", "DIM", "READ",
+          "LET", "GOTO", "RUN", "IF", "RESTORE", "GOSUB", "RETURN", "REM",
+          "STOP", "ON", "WAIT", "LOAD", "SAVE", "VERIFY", "DEF", "POKE",
+          "PRINT#", "PRINT", "CONT", "LIST", "CLR", "CMD", "SYS", "OPEN",
+          "CLOSE", "GET", "NEW", "TAB(", "TO", "FN", "SPC(", "THEN", "NOT",
+          "STEP", "+", "-", "*", "/", "^", "AND", "OR", ">", "=", "<",
+          "SGN", "INT", "ABS", "USR", "FRE", "POS", "SQR", "RND", "LOG",
+          "EXP", "COS", "SIN", "TAN", "ATN", "PEEK", "LEN", "STR$", "VAL",
+          "ASC", "CHR$", "LEFT$", "RIGHT$", "MID$", "GO"]
+TOK_TO_STR = {}
+val = 128
+for tok in TOKENS:
+    TOK_TO_STR[val] = tok
+    val += 1
+
+
+def prg_line_to_ascii(data: bytearray):
+    def convert(c):
+        return TOK_TO_STR[c] if c in TOK_TO_STR else chr(c)
+    res = ""
+    in_quotes = False
+    for c in data:
+        if c == 34:
+            in_quotes = not in_quotes
+        res += convert(c) if not in_quotes else chr(c)
+    return res
+
+
+class Element:
+    def __init__(self, data):
+        self.data = data
+
+    def get_bytes(self):
+        return self.data
+
+    def __str__(self):
+        return f"Element {self.data}"
+
+
+class ElementPrint(Element):
+    def __init__(self, data):
+        self.data = data
+        data = data.replace(b'""',
+                            b'')  # this replaces "" only in internal representation, will not get serialized later
+        self.is_constant = data[1:2] == b'"' and (data[-2:] == b'";' or data[-1:] == b'"') and b'"' not in data[2:-2]
+        if self.is_constant:
+            if data[-2:] == b'";':
+                self.constant = data[2:-2]
+            else:
+                self.constant = data[2:-1] + b'\x0d'
+
+    def __str__(self):
+        return f"PRINT {self.data}"
+
+
+class ElementSys(Element):
+    def __init__(self, data: bytearray = None, addr: int = None):
+        if data is not None:
+            self.data = data
+        elif addr is not None:
+            self.data = bytearray([158] + bytes(str(addr), "ascii"))
+        else:
+            assert False
+        self.is_sysq = False
+        self.is_simple_sysq = False
+        if self.data[1] != 0x51:
+            return
+        pars = self.data[1:].split(b',')
+        if len(pars) < 4:
+            return
+        self.is_sysq = pars[0] == b'Q'
+        self.sysq_pars = pars[1:3]
+        str_par = self.data[len(pars[0]) + len(pars[1]) + len(pars[2]) + 4:]
+        str_par = str_par.replace(b'""',
+                                  b'')  # this replaces "" only in internal representation, will not get serialized later
+        self.is_simple_sysq = self.is_sysq and str_par[0:1] == b'"' and (
+                    str_par[-2:] == b'";' or str_par[-1:] == b'"') and b'"' not in str_par[2:-2]
+        self.sysq_pars.append(str_par)
+        if self.is_simple_sysq:
+            if str_par[-2:] == b'";':
+                str_par = str_par[1:-2]
+            else:
+                str_par = str_par[1:-1] + b'\x0d'
+            self.constant = str_par
+            print(f"SIMPLE sysq_pars: {self.sysq_pars}")
+        else:
+            print(f"COMPLEX sysq_pars: {self.sysq_pars}")
+
+
+class ElementIf(Element):
+    pass
+
+
+def create_element(data):
+    if len(data) > 0:
+        if data[0] == 153:
+            return ElementPrint(data)
+        elif data[0] == 158:
+            return ElementSys(data)
+        elif data[0] == 139:
+            return ElementIf(data)
+    return Element(data)
+
+
+CTRLCODE_TO_TITLE = {
+    3: "run/stop",
+    5: "white",
+    8: "disable toggle charset",
+    9: "enable toggle charset",
+    13: "return",
+    14: "toggle charset",
+    17: "down",
+    18: "reverse on",
+    19: "home",
+    20: "del",
+    28: "red",
+    29: "right",
+    30: "green",
+    31: "blue",
+    129: "orange",
+    131: "shift run/stop",
+    133: "f1",
+    134: "f3",
+    135: "f5",
+    136: "f7",
+    137: "f2",
+    138: "f4",
+    139: "f6",
+    140: "f8",
+    141: "shift return",
+    142: "upper caps/graphics",
+    144: "black",
+    145: "up",
+    146: "reverse off",
+    147: "clear",
+    148: "insert",
+    149: "brown",
+    150: "light red",
+    151: "grey 1",
+    152: "grey 2",
+    153: "light green",
+    154: "light blue",
+    155: "grey 3",
+    156: "purple",
+    157: "left",
+    158: "yellow",
+    159: "cyan"
+}
+
+
+def get_var_branch_info(data: bytearray, branch_targets: list = [], jump_sources: list = None) -> str:
+    in_data = False
+    in_quotes = False
+    in_rem = False
+    in_branch = False
+    in_gosub = False
+    line_has_if = False
+    starting_token = -1
+    line_contains_unconditional_branch = False
+    line_number = data[0] + (data[1] << 8)
+    var_name = bytearray()
+    branch_target = bytearray()
+    j_sources = "&#10;".join([f"GOTO from {j}" if j >= 0 else f"GOSUB from {abs(j)}" for j in jump_sources]) if jump_sources is not None else ""
+    is_subroutine = min(jump_sources) < 0 if jump_sources is not None and len(jump_sources) > 0 else False
+    line_number_style = "color: red" if is_subroutine else ("color: blue" if jump_sources is not None and len(jump_sources) > 0 else "")
+    html = f"<div class='fontc64' id='line_{line_number}'><span title='{j_sources}' style='{line_number_style}'>{line_number}</span> "
+    def get_var_id(var_name):
+        return "var_" + var_name.replace(" ", "_").replace("$", "str").replace("%", "int").replace("(", "arr")
+    def add_var_name_to_html():
+        nonlocal html
+        if len(var_name) > 0:
+            var_label = var_name.decode('ascii')
+            #print(f"Variable: {var_label}")
+            var_name.clear()
+            html = html + f"<span class='{get_var_id(var_label)}' onmouseover='setClassCol(\"{get_var_id(var_label)}\", \"red\")' onmouseout='setClassCol(\"{get_var_id(var_label)}\", \"black\")'>{var_label}</span>"
+    def add_branch_target_to_html():
+        nonlocal html, in_gosub
+        if len(branch_target) > 0:
+            target = int(branch_target.decode('ascii'))
+            #print(f"Branch target: {target}")
+            html = html + f"<a href='#line_{target}'>{target}</a>"
+            if in_gosub:
+                target = -target
+            branch_targets.append(target)
+            branch_target.clear()
+    def add_char_to_html(c: int, detokenize: bool):
+        nonlocal html
+        if c == 32:
+            html = html + "&nbsp;"
+        elif 31 < c < 91:
+            html = html + chr(c)
+        elif detokenize:
+            if c in TOK_TO_STR:
+                token = TOK_TO_STR[c]
+                if len(token) > 1:
+                    html = html + f"<a class='nolink' href='https://c64-wiki.de/wiki/{token}'>{token}</a>"
+                else:
+                    html = html + token
+            else:
+                html = html + f"&#xEE{c:2x};"
+        else:
+            sc = ([0x80, 0x20, 0x00, 0x40, 0xC0, 0x60, 0x40, 0x60][c >> 5] + (c & 0x1f)) if c != 255 else 94
+            char = f"&#xEE{sc:2x};"
+            if c in CTRLCODE_TO_TITLE:
+                char = f"<span title='{CTRLCODE_TO_TITLE[c]}'>{char}</span>"
+            html = html + char
+
+    for c in data[2:]:
+        if in_branch and c > 127:
+            add_branch_target_to_html()
+            in_branch = False
+            in_gosub = False
+        if not in_quotes and not in_data and not in_rem and c > 127:
+            if c == 137 and not starting_token == 145:  # GOTO but not ON...GOTO
+                line_contains_unconditional_branch = True
+            if c == 142:  # RETURN
+                line_contains_unconditional_branch = True
+            if starting_token == -1:
+                starting_token = c
+
+        if in_quotes or c == 34:  # "
+            if c == 34:
+                add_var_name_to_html()
+                in_quotes = not in_quotes
+            add_char_to_html(c, False)
+        elif in_data:
+            if c == 58:  # :
+                in_data = False
+            starting_token = -1
+            add_char_to_html(c, False)
+        elif in_rem:
+            add_char_to_html(c, True)
+            continue
+        elif c == 131:  # DATA
+            add_var_name_to_html()
+            add_char_to_html(c, True)
+            in_data = True
+        elif c == 143:  # REM
+            add_var_name_to_html()
+            add_char_to_html(c, True)
+            in_rem = True
+        elif c in [137, 138, 141, 155, 167]:  # GOTO, RUN, GOSUB, LIST, THEN
+            add_var_name_to_html()
+            in_gosub = c == 141
+            in_branch = True
+            add_char_to_html(c, True)
+        elif c == 40:  # (
+            if len(var_name) > 0:
+                var_name.append(c)
+                add_var_name_to_html()
+            else:
+                add_char_to_html(c, True)
+        elif (64 < c < 91) and len(var_name) == 0:  # A..Z
+            add_branch_target_to_html()
+            in_branch = False
+            in_gosub = False
+            var_name.append(c)
+        elif (64 < c < 91) or (47 < c < 58) and len(var_name) > 0:  # A..Z0..9
+            var_name.append(c)
+        elif (47 < c < 58) and in_branch:
+            branch_target.append(c)
+        elif (c in [36, 37]) and len(var_name) > 0:  # %, $
+            var_name.append(c)
+            add_branch_target_to_html()
+        elif c == 32:  # spaces are not significant but possibly _important_ ("F N")
+            if len(var_name) > 0:
+                var_name.append(c)
+            continue
+        else:
+            if in_branch:
+                if c == 44:  # ,
+                    add_branch_target_to_html()
+                elif c == 58:  # :
+                    add_branch_target_to_html()
+                    in_branch = False
+                    in_gosub = False
+            add_var_name_to_html()
+            add_char_to_html(c, True)
+            if c == 58:  # :
+                starting_token = -1
+            elif c == 139:  # IF
+                line_has_if = True
+    add_var_name_to_html()
+    add_branch_target_to_html()
+    html = html + "</div>"
+    if not line_has_if and line_contains_unconditional_branch:
+        html = html + "<br/>"
+    return html + "\n"
+
+
+class Line:
+    def __init__(self, data):
+        self.number = data[0] + (data[1] << 8)
+        self.elements = []
+        data = data[2:]
+        print(f"{self.number} {prg_line_to_ascii(data)} --- {data}")
+        off = 0
+        in_quotes = False
+        in_data = False
+        while off < len(data):
+            if data[off] == 34:  # "
+                in_quotes = not in_quotes
+            elif data[off] == 131:  # DATA
+                in_data = True
+            elif data[off] == 58:  # :
+                if not in_quotes:
+                    self.elements.append(create_element(data[:off]))
+                    self.elements.append(create_element(data[off:off + 1]))  # TODO should include whitespace here
+                    data = data[off + 1:]
+                    in_data = False
+                    off = -1
+            elif data[off] == 167:  # THEN
+                if not in_quotes and not in_data:
+                    self.elements.append(create_element(data[:off + 1]))
+                    data = data[off + 1:]
+                    off = -1
+            off += 1
+        if len(data) > 0:
+            self.elements.append(create_element(data))
+
+    def get_bytes(self):
+        out = bytearray([self.number & 255, (self.number >> 8) & 255])
+        for el in self.elements:
+            out.extend(el.get_bytes())
+        if len(out) == 2:
+            out.extend(b'\x8f')  # REM
+        out.extend(b'\00')
+        return out
+
+    def __str__(self):
+        return f"{self.number} {prg_line_to_ascii(self.get_bytes()[2:-1])} --- {len(self.elements)} elements"
+
+
+class Program:
+    def __init__(self, data):
+        self.startaddr = data[0] + (data[1] << 8)
+        self.lines = []
+        curoff = 2
+        while curoff < len(data):
+            if data[curoff] == 0 and data[curoff + 1] == 0:
+                return
+            line_data = data[curoff + 2:]
+            line_data = line_data[0:line_data[2:].find(b'\x00') + 2]
+            # print(line_data)
+            self.lines.append(Line(line_data))
+            curoff += len(line_data) + 3
+
+    def get_bytes(self):
+        outprg = bytearray([self.startaddr & 255, (self.startaddr >> 8) & 255])
+        curadr = self.startaddr
+        for line in self.lines:
+            line_bytes = line.get_bytes()
+            curadr += len(line_bytes) + 2
+            outprg.append(curadr & 255)
+            outprg.append((curadr >> 8) & 255)
+            outprg.extend(line_bytes)
+        outprg.extend([0, 0])
+        return outprg
+
+    def __str__(self):
+        return f"Program with {len(self.lines)} lines"
+
+
+def analyze_program(program: Program) -> (dict, str):
+    line_number_to_jump_source = dict()
+    for line in program.lines:
+        branch_targets = []
+        get_var_branch_info(line.get_bytes()[:-1],
+                            branch_targets=branch_targets)
+        for target in branch_targets:
+            sources = line_number_to_jump_source.setdefault(abs(target), [])
+            sources.append(line.number if target >= 0 else -line.number)
+    html = """
+        <html><head><style type="text/css">
+        @font-face {
+        font-family: "C64";
+        src: url("C64_Pro_Mono-STYLE.woff2") format("woff2");
+        }
+        .fontc64 { font-family: "C64"; }
+        .nolink { text-decoration: none; }
+        </style>
+        <script>function setClassCol(cls, col){for(let el of document.getElementsByClassName(cls)) { el.style = "color: "+col; }};</script>
+        </head><body>
+        """
+    for line in program.lines:
+        html = html + get_var_branch_info(line.get_bytes()[:-1],
+                                          jump_sources=line_number_to_jump_source.setdefault(line.number, []))
+    html = html + "</body></html>"
+    return line_number_to_jump_source, html
+
+
+petscii_to_color = {144: 0, 5: 1, 28: 2, 159: 3, 156: 4, 30: 5, 31: 6, 158: 7, 129: 8, 149: 9, 150: 10, 151: 11,
+                    152: 12, 153: 13, 154: 14, 155: 15}
+
+
+def get_fastcode_for_offset(off: int) -> bytearray:
+    res = bytearray()
+    while off != 0:
+        if off >= 0:
+            b = off if off <= 127 else 127
+        else:
+            b = off if off >= -128 else -128
+        res.extend([254, b & 0xff])
+        off -= b
+    return res
+
+
+def get_term_fastcode(adj_x, adj_y: int) -> bytearray:
+    return bytearray([255,
+                      adj_x & 0xff,
+                      adj_y & 0xff])  # end marker
+
+
+def convert_petscii_to_fastcode(data) -> (bytearray, int, int):
+    res = bytearray()
+    accumulated_offset = 0
+    adjust_x_pos = 0
+    adjust_y_pos = 0
+    cur_color = -1
+    c = 0
+    reversed = False
+    i = 0
+    while i < len(data):
+        c = data[i]
+        i += 1
+        if c == 255:  # Pi
+            c = 94
+        elif c == 147:
+            assert False, "clr/home not supported"
+        elif c == 19:
+            assert False, "home not supported"
+        elif c == 29:  # RIGHT
+            accumulated_offset += 1
+            adjust_x_pos += 1
+            continue
+        elif c == 157:  # LEFT
+            accumulated_offset -= 1
+            adjust_x_pos -= 1
+            continue
+        elif c == 17:  # DOWN
+            accumulated_offset += 40
+            adjust_y_pos += 1
+            continue
+        elif c == 145:  # UP
+            accumulated_offset -= 40
+            adjust_y_pos -= 1
+            continue
+        elif c in petscii_to_color:
+            col_new = petscii_to_color[c]
+            if col_new != cur_color:
+                res.extend([252, col_new])
+                cur_color = col_new
+            continue
+        elif c == 18:
+            reversed = True
+            continue
+        elif c == 146:
+            reversed = False
+            continue
+        elif c == 13 and i == len(data):
+            continue
+        elif c in [133, 134, 135, 136, 137, 138, 139, 140, 20, 3, 8, 9, 13, 141, 148, 14, 142]:
+            assert False, "unsupported PETSCII {i}"
+        else:
+            c = [0x80, 0x20, 0x00, 0x40, 0xC0, 0x60, 0x40, 0x60][c >> 5] + (c & 0x1f)
+        if reversed:
+            c = c | 0x80
+        adjust_x_pos += 1
+        res.extend(get_fastcode_for_offset(accumulated_offset))
+        accumulated_offset = 0
+        if c >= 252:
+            res.extend([253, c])  # escape one char
+        else:
+            res.append(c)
+    # if reversed:
+    #    assert False, "reversed still on"
+    res.extend(get_fastcode_for_offset(accumulated_offset))
+    return res, adjust_x_pos, adjust_y_pos
+
+
+class StringTracker:
+    def __init__(self):
+        self.str_table = []
+        self.total_src_bytes = 0
+        self.total_dst_bytes = 0
+        self.tracked_elements = []
+        self.tracked_fastcode = bytearray()
+        self.start_x_pos = None
+        self.start_y_pos = None
+        self.cur_x_pos = None
+        self.cur_y_pos = None
+        self.x_adj = 0
+        self.y_adj = 0
+
+    def reset(self):
+        self.tracked_elements = []
+        self.tracked_fastcode = bytearray()
+        self.start_x_pos = None
+        self.start_y_pos = None
+        self.cur_x_pos = None
+        self.cur_y_pos = None
+        self.x_adj = 0
+        self.y_adj = 0
+
+    def add_string(self, el: Element, petscii: bytearray, start_x_pos: int = None, start_y_pos: int = None,
+                   could_parse_start_pos: bool = True):
+        if start_y_pos is not None and self.cur_y_pos is None or \
+                start_x_pos is not None and self.cur_x_pos is None:
+            # have new absolute positioning but were relative before: flush first
+            self.flush_string(deinit_xy_tracking=True)
+        if self.cur_x_pos is not None and start_x_pos is not None:
+            if self.cur_y_pos is not None and start_y_pos is not None:
+                # have abs pos, got abs PRINT: move relative
+                self.tracked_fastcode.extend(
+                    get_fastcode_for_offset(start_x_pos - self.cur_x_pos + (start_y_pos - self.cur_y_pos)*40)
+                )
+                self.x_adj += start_x_pos - self.cur_x_pos
+                self.y_adj += start_y_pos - self.cur_y_pos
+                self.cur_x_pos = start_x_pos
+                self.cur_y_pos = start_y_pos
+        if len(self.tracked_fastcode) == 0:
+            # just starting, init x/y tracking
+            if could_parse_start_pos:
+                if start_x_pos is None and self.cur_x_pos is not None:
+                    start_x_pos = self.cur_x_pos  # know X from previous
+                if start_y_pos is None and self.cur_y_pos is not None:
+                    start_y_pos = self.cur_y_pos  # know Y from previous
+            self.start_x_pos = start_x_pos
+            self.start_y_pos = start_y_pos
+            self.cur_x_pos = start_x_pos
+            self.cur_y_pos = start_y_pos
+            self.x_adj = 0
+            self.y_adj = 0
+        self.tracked_elements.append(el)
+        fastcode, adj_x, adj_y = convert_petscii_to_fastcode(petscii)
+        self.x_adj += adj_x
+        self.y_adj += adj_y
+        if self.cur_y_pos is not None:
+            self.cur_y_pos += adj_y
+        if self.cur_x_pos is not None:
+            self.cur_x_pos += adj_x
+        self.tracked_fastcode.extend(fastcode)
+        self.total_src_bytes += len(petscii)
+        if petscii.endswith(b'\x0d'):
+            if self.cur_x_pos is None and start_x_pos is None:
+                # were relative, have relative string that ends in CR: flush
+                self.x_adj = 0xff
+                self.flush_string()
+            else:
+                # we have absolut pos, just keep track of CR
+                if self.cur_y_pos is not None:
+                    self.cur_y_pos += 1
+                self.y_adj += 1
+                self.x_adj -= self.cur_x_pos
+                self.tracked_fastcode.extend(
+                    get_fastcode_for_offset(40 - self.cur_x_pos)
+                )
+            self.cur_x_pos = 0  # we do know that we're in column 0 now
+
+    def flush_string(self, deinit_xy_tracking: bool = False):
+        if len(self.tracked_fastcode) == 0:
+            if deinit_xy_tracking:
+                self.reset()
+            return False
+        print("FLUSHING")
+
+        # end term marker to fastcode
+        self.tracked_fastcode.extend(get_term_fastcode(self.x_adj, self.y_adj))
+
+        # add fastcode to table/reuse existing entry
+        if self.tracked_fastcode not in self.str_table:
+            if len(self.str_table) >= 255:
+                print("ERROR: Available table entries exhausted")
+                return False
+            new_dst_bytes = self.total_dst_bytes + len(self.tracked_fastcode) + 2
+            if new_dst_bytes > (str_table_end - str_table_addr):
+                print("ERROR: Table space exhausted")
+                self.reset()
+                return False
+            self.str_table.append(self.tracked_fastcode)
+            i_str = len(self.str_table) - 1
+            self.total_dst_bytes = new_dst_bytes
+            print(f"Using fastcode nr. {i_str} from table")
+        else:
+            i_str = self.str_table.index(self.tracked_fastcode)
+            print(f"Fastcode already in table at index {i_str}, reusing")
+
+        # generate BASIC code
+        rep_code = bytearray()
+
+        # GotoXY
+        if self.start_x_pos is not None:
+            rep_code.extend(b'\x97211,')  # poke211,
+            rep_code.extend(str(self.start_x_pos).encode("ascii"))
+            rep_code.extend(b':')
+        if self.start_y_pos is not None:
+            rep_code.extend(b'\x97214,')  # poke214,
+            rep_code.extend(str(self.start_y_pos).encode("ascii"))
+            rep_code.extend(b':')
+
+        # POKEhelper,index:SYShelper+1
+        rep_code.extend(b'\x97' + str(helper_addr).encode("ascii") + b',' + str(i_str).encode("ascii"))  # poke...
+        rep_code.extend(b':\x9e' + str(helper_addr + 1).encode("ascii"))  # sys...
+        self.tracked_elements[0].data = rep_code  # todo don't mutate
+        if len(self.tracked_elements) > 1:
+            # replace other tracked BASIC elements with NOPs
+            for el in self.tracked_elements[1:]:
+                print(f"Nuking {el.data}")
+                el.data = bytearray()
+
+        if deinit_xy_tracking:
+            self.reset()
+        else:
+            self.tracked_elements = []
+            self.tracked_fastcode = bytearray()
+        return True
+
+
+def crank_the_print(program: Program, branch_table: dict):
+    string_tracker = StringTracker()
+    for line in program.lines:
+        if line.number in branch_table.keys() and len(branch_table[line.number]) > 0:
+            if string_tracker.flush_string(deinit_xy_tracking=True):
+                print(f"Flushed: Line {line.number} is jumped to from {' '.join([str(l) for l in branch_table[line.number]])}")
+        print(line)
+        i_el = -1
+        line_contains_branch = False
+        while i_el < len(line.elements) - 1:
+            i_el += 1
+            el = line.elements[i_el]
+            if isinstance(el, ElementIf):
+                line_contains_branch = True
+            if isinstance(el, ElementPrint):
+                if not el.is_constant or not line_whitelisted(line.number):
+                    string_tracker.flush_string(deinit_xy_tracking=True)
+                    continue
+                print(f"PRINT constant in line {line.number}: {el.constant}")
+                try:
+                    if len(string_tracker.tracked_fastcode) + len(el.constant) < 10:
+                        raise Exception("skipping, constant too short")
+                    string_tracker.add_string(el, el.constant)
+                except Exception as e:
+                    # non-convertable string
+                    string_tracker.flush_string(deinit_xy_tracking=True)
+                    print(e)
+                continue
+            if isinstance(el, ElementSys):
+                try:
+                    if el.is_sysq:
+                        print(f"SYSQ found in line {line.number}: {el.sysq_pars}")
+                        rep_code = bytearray(b'\x97211,')  # poke211,
+                        rep_code.extend(el.sysq_pars[0])
+                        rep_code.extend(b':\x97214,')  # poke214,
+                        rep_code.extend(el.sysq_pars[1])
+                        rep_code.extend(b':')
+                        el.data = rep_code  # todo don't mutate
+
+                        if el.is_simple_sysq and line_whitelisted(line.number):
+                            try:
+                                convert_petscii_to_fastcode(el.constant)  # just checking suitability of string
+
+                                x_pos = None
+                                y_pos = None
+                                try:
+                                    x_pos = int(el.sysq_pars[0].decode("ascii"))
+                                    y_pos = int(el.sysq_pars[1].decode("ascii"))
+                                    # Notify StringTracker of X/Y pos and mark generated GotoXY code for replacement.
+                                    string_tracker.add_string(el, el.constant, x_pos, y_pos)
+                                    # Just in case flush_string runs into trouble later, add standard code
+                                    el.data.extend(b'\x9e58732:\x99')  # sys58732:print
+                                    el.data.extend(el.sysq_pars[2])
+                                except Exception as e:
+                                    print("SYSQ doesn't use constants as X/Y, cannot track position")
+                                    # We keep the two POKEs in any case.
+                                    # Add a SYSgotoxy:PRINT placeholder element that might get replaced later.
+                                    rep_code = bytearray(b'\x9e58732:\x99')
+                                    rep_code.extend(el.sysq_pars[2])
+                                    next_el = Element(rep_code)
+                                    i_el += 1
+                                    line.elements.insert(i_el, next_el)
+                                    string_tracker.add_string(next_el, el.constant, could_parse_start_pos=False)
+                                continue
+                            except Exception as e:
+                                # cannot convert, fall through to normal PRINT
+                                print(e)
+                        # combined sysq or non-compilable parameter, just PRINT
+                        string_tracker.flush_string(deinit_xy_tracking=True)
+                        el.data.extend(b'\x9e58732:\x99')  # sys58732:print
+                        el.data.extend(el.sysq_pars[2])
+                    else:
+                        string_tracker.flush_string(deinit_xy_tracking=True)
+                except Exception as e:
+                    string_tracker.flush_string(deinit_xy_tracking=True)
+                    print(e)
+                continue
+            if el.get_bytes() != b':':
+                print(f"Unhandled element: {prg_line_to_ascii(el.get_bytes())} --- {el}")
+                string_tracker.flush_string(deinit_xy_tracking=True)
+        # end of line
+        if line_contains_branch:
+            if string_tracker.flush_string(deinit_xy_tracking=True):
+                print("Flushed: Line contained branch")
+    string_tracker.flush_string()
+
+    print("******* Done")
+    print(f"Number of strings: {len(string_tracker.str_table)}")
+    print(f"Input bytes:  {string_tracker.total_src_bytes}")
+    print(f"Output bytes: {string_tracker.total_dst_bytes}")
+    print(f"Table from {str_table_addr:x} to {(str_table_addr + string_tracker.total_dst_bytes):x}")
+
+    with open(table_file, "wb") as tablefile:
+        tablefile.write(bytearray([str_table_addr & 255, (str_table_addr >> 8) & 255]))
+        off = str_table_addr + 2 * len(string_tracker.str_table)
+        for s in string_tracker.str_table:
+            tablefile.write(bytearray([off & 255, (off >> 8) & 255]))
+            off += len(s)
+        for s in string_tracker.str_table:
+            tablefile.write(s)
+
+
+with open(input_file, "rb") as infile:
+    inprg = bytes(infile.read())
+input_program = Program(inprg)
+branch_table, doc_html = analyze_program(input_program)
+crank_the_print(input_program, branch_table)
+outprg = input_program.get_bytes()
+with open(output_file, "wb") as outfile:
+    outfile.write(outprg)
+with open(output_html_file, "w") as outfile:
+    outfile.write(doc_html)

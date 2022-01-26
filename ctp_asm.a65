@@ -1,0 +1,140 @@
+; Crank the PRINT! C64 side helper code.
+; xa65 assembler syntax.
+
+.word $c2ec
+*=$c2ec
+strptrarr=$e000  ; must be $xx00
+
+strindex:   brk
+start:      ldx $d6
+            jsr $e9f0    ; Set start of line $D1/$D2
+            jsr $ea24    ; Set colmem adrs $F3/$F4
+
+            lda $01
+            sta cpuport
+            php
+            sei
+            lda #$35
+            sta $01
+
+            ldx #$01
+            lda strindex
+            asl
+            sta scopy+1
+            lda #>strptrarr
+            adc #$00
+            sta scopy+2
+scopy:      lda $f000,x
+            sta srcptr,x
+            dex
+            bpl scopy
+
+            lda $d1
+            clc
+            adc $d3
+            sta dstptr
+            lda #$00
+            adc $d2
+            sta dstptr+1
+
+            lda $f3
+            clc
+            adc $d3
+            sta colptr
+            lda #$00
+            adc $f4
+            sta colptr+1
+
+            ldy $0286
+            ldx #$00
+            beq loop
+
+justincsrc: inc srcptr
+            beq incsrchi
+loop:
+srcptr=*+1
+            lda $f000,x
+gnbh:       cmp #$fc      ; CMP gets overwritten in getnextbyte
+            bcs special
+storebyte:
+dstptr=*+1
+            sta $f000,x
+            tya
+colptr=*+1
+            sta $f000,x
+loopnext:   inx
+            bne loop
+            inc dstptr+1
+            inc colptr+1
+incsrchi:   inc srcptr+1
+            jmp loop
+
+
+special:    bne cont1
+specFC:     jsr getnextbyte  ; set color
+            sta $0286
+            tay
+            jmp justincsrc
+
+cont1:      cmp #$ff
+            bne cont2
+
+specFF:     jsr getnextbyte  ; end, adjust X/Y
+            cmp #$ff
+            bne nofinalcr
+            inc $d6
+            lda #$00
+            beq finalcr
+nofinalcr:  clc
+            adc $d3
+finalcr:    sta $d3
+            jsr getnextbyte
+            clc
+            adc $d6
+            sta $d6
+            tax
+cpuport=*+1
+            lda #$00
+            sta $01
+            jsr $e9f0
+            jsr $ea24
+            plp
+            rts
+
+cont2:      cmp #$fd
+            bne specFE
+
+specFD:     jsr getnextbyte ; Escape one character
+            jmp storebyte
+
+specFE:     jsr getnextbyte ; Offset relative X/Y
+            sta fedelta
+            clc
+            adc dstptr
+            php
+            sta dstptr
+            sta colptr
+fedelta=*+1
+            lda #$f0
+            and #$80
+            beq feskip1
+            lda #$ff
+feskip1:    sta fed2
+            adc dstptr+1
+            sta dstptr+1
+fed2=*+1
+            lda #$f0
+            plp
+            adc colptr+1
+            sta colptr+1
+            jmp justincsrc
+
+getnextbyte:
+            lda #$60     ; overwrite CMP with RTS temporarily
+            sta gnbh
+            jsr justincsrc
+            pha          ; undo rewrite
+            lda #$c9
+            sta gnbh
+            pla
+            rts
