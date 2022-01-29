@@ -4,6 +4,8 @@
 # Because in 2022, the C64 PRINT needs a speed update.
 # https://github.com/c1570/CrankThePRINT
 
+import csv
+import os.path
 import sys
 
 input_file = sys.argv[1] if len(sys.argv) > 1 else "input.prg"
@@ -185,7 +187,7 @@ def get_var_branch_info(data: bytearray, branch_targets: list = [], jump_sources
     branch_target = bytearray()
     j_sources = "&#10;".join([f"GOTO from {j}" if j >= 0 else f"GOSUB from {abs(j)}" for j in jump_sources]) if jump_sources is not None else ""
     is_subroutine = min(jump_sources) < 0 if jump_sources is not None and len(jump_sources) > 0 else False
-    line_number_style = "color: red" if is_subroutine else ("color: blue" if jump_sources is not None and len(jump_sources) > 0 else "")
+    line_number_style = "color: green" if is_subroutine else ("color: grey" if jump_sources is not None and len(jump_sources) > 0 else "")
     html = f"<div class='fontc64' id='line_{line_number}'><span title='{j_sources}' style='{line_number_style}'>{line_number}</span> "
     def get_var_id(var_name):
         return "var_" + var_name.replace(" ", "_").replace("$", "str").replace("%", "int").replace("(", "arr")
@@ -195,7 +197,11 @@ def get_var_branch_info(data: bytearray, branch_targets: list = [], jump_sources
             var_label = var_name.decode('ascii')
             #print(f"Variable: {var_label}")
             var_name.clear()
-            html = html + f"<span class='{get_var_id(var_label)}' onmouseover='setClassCol(\"{get_var_id(var_label)}\", \"red\")' onmouseout='setClassCol(\"{get_var_id(var_label)}\", \"black\")'>{var_label}</span>"
+            global labels
+            var_id = get_var_id(var_label)
+            var_title = labels.get(var_label, "")
+            #print(f"var,{var_label},")
+            html = html + f"<span class='{var_id}' title='{var_title}' onclick='highlightClass(\"{var_id}\")'>{var_label}</span>"
     def add_branch_target_to_html():
         nonlocal html, in_gosub
         if len(branch_target) > 0:
@@ -279,6 +285,8 @@ def get_var_branch_info(data: bytearray, branch_targets: list = [], jump_sources
             in_gosub = False
             var_name.append(c)
         elif (64 < c < 91) or (47 < c < 58) and len(var_name) > 0:  # A..Z0..9
+            if var_name[-1] in [36, 37]:  # %, $
+                add_var_name_to_html()
             var_name.append(c)
         elif (47 < c < 58) and in_branch:
             branch_target.append(c)
@@ -394,15 +402,31 @@ def analyze_program(program: Program) -> (dict, str):
             sources = line_number_to_jump_source.setdefault(abs(target), [])
             sources.append(line.number if target >= 0 else -line.number)
     html = """
-        <html><head><style type="text/css">
+        <!DOCTYPE html><html><head><meta charset="utf-8"/><style type="text/css">
         @font-face {
         font-family: "C64";
         src: url("C64_Pro_Mono-STYLE.woff2") format("woff2");
         }
-        .fontc64 { font-family: "C64"; }
+        .fontc64 { font-family: "C64"; white-space: nowrap; }
         .nolink { text-decoration: none; }
         </style>
-        <script>function setClassCol(cls, col){for(let el of document.getElementsByClassName(cls)) { el.style = "color: "+col; }};</script>
+        <script>
+          function highlightClass(cls){
+            document.querySelectorAll('.marker').forEach(a => a.remove());
+            document.querySelectorAll('.highlighted').forEach(a => { a.classList.remove("highlighted"); a.style = "color: black"; });
+            for(let el of document.getElementsByClassName(cls)) {
+              el.style = "color: red";
+              el.classList.add("highlighted");
+
+              let d = document.createElement("div");
+              d.classList.add("marker");
+              d.innerHtml="&nbsp";
+              let relative = (el.getBoundingClientRect().top + (window.pageYOffset || document.documentElement.scrollTop)) / document.body.scrollHeight * 100;
+              d.style.cssText="position: fixed; right: 0; border: 3px solid; border-color: red; width: 10px; top: " + relative + "%;";
+              document.body.appendChild(d);
+            }
+          };
+        </script>
         </head><body>
         """
     for line in program.lines:
@@ -768,6 +792,12 @@ def crank_the_print(program: Program, branch_table: dict):
 
 with open(input_file, "rb") as infile:
     inprg = bytes(infile.read())
+labels = {}
+if os.path.isfile("labels.csv"):
+    with open("labels.csv", newline="") as csvfile:
+        csvreader = csv.reader(csvfile, delimiter=',')
+        for row in csvreader:
+            labels[row[1]] = row[2]
 input_program = Program(inprg)
 branch_table, doc_html = analyze_program(input_program)
 crank_the_print(input_program, branch_table)
