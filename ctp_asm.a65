@@ -1,8 +1,8 @@
 ; Crank the PRINT! C64 side helper code.
 ; xa65 assembler syntax.
 
-.word $c2ec
-*=$c2ec
+.word $ce00
+*=$ce00
 strptrarr=$e000  ; must be $xx00
 
 strindex:   brk

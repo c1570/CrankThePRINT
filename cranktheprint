@@ -14,9 +14,10 @@ output_html_file = "output.html"
 table_filename_template = "table_$1.prg"
 str_table_buckets = [
     (0xe000, 0xfff0),
-    (0xa000, 0xafff)
+    (0xa000, 0xafff),
+    (0xc800, 0xcdff)
 ]
-helper_addr = 0xc2ec
+helper_addr = 0xce00
 
 
 def line_whitelisted(number):

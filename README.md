@@ -20,14 +20,17 @@ The result is very compiler friendly, so do put CtP's result code through some B
   * PRINT"HOW DO YOU DO" gets processed. PRINT"MY NAME IS "A$ gets ignored.
 * CtP only supports relative positioning in PRINT constants: Cursor Up is fine but HOME or CLR/HOME makes CtP ignore that PRINT.
 * CtP will happily put your constants below ROM. More space for your BASIC program.
+  * You can configure several memory locations that CtP may use. See "buckets" in the source.
 * Your program will have to take care about loading the SYS helper and data.
   * It's easiest just to use [Exomizer](https://bitbucket.org/magli143/exomizer/wiki/Home) to combine all parts into one packed PRG.
 * Caveats
   * CtP handles reverse control characters but ignores the reverse flag.
-    * PRINT"{RVON}";:DATA:PRINT"THIS SHOULD BE REVERSED" will break (the "DATA" is just there to prevent CtP from combining strings).
-    * PRINT"{RVON}THIS IS REVERSED{RVOFF}" will work just fine.
+    * PRINT"{RVON}";:A=0:PRINT"THIS SHOULD BE REVERSED" will break (the "A=0" is just there to prevent CtP from combining strings).
+    * PRINT"{RVON}THIS IS REVERSED{RVOF}" will work just fine.
   * Long logical lines (>40 chars) are not supported.
   * Screen scrolling is not supported.
   * There's no range checking when writing to the screen. Printing outside screen space will corrupt memory.
+
+As a bonus, CtP also generates an HTML document of the BASIC program with some automated formatting (blank lines before subroutines), highlighting of selected variables, backreferences per line, and clickable GOTO/GOSUB destinations.
 
 ² Going even faster would certainly be possible if sacrificing some compatibility, e.g., hardcoding screen mem or not caring about $D1/$D2.
