@@ -175,6 +175,8 @@ CTRLCODE_TO_TITLE = {
 
 
 def get_var_branch_info(data: bytearray, branch_targets: list = [], jump_sources: list = None) -> str:
+    if len(data) <= 2:
+        return ""
     in_data = False
     in_quotes = False
     in_rem = False
@@ -350,12 +352,21 @@ class Line:
         if len(data) > 0:
             self.elements.append(create_element(data))
 
-    def get_bytes(self):
+    def get_bytes(self, branch_table=[]):
         out = bytearray([self.number & 255, (self.number >> 8) & 255])
+        empty_line = True
         for el in self.elements:
-            out.extend(el.get_bytes())
-        if len(out) == 2:
-            out.extend(b'\x8f')  # REM
+            el_bytes = bytes(el.get_bytes())
+            if el_bytes != b':' and el_bytes != b'':
+                empty_line = False
+            out.extend(el_bytes)
+        if empty_line:
+            if self.number in branch_table and len(branch_table[self.number]) > 0:
+              print(f"{self.number} is in branch_table! len(out) is {len(out)}")
+              if len(out) == 2:
+                  out.extend(b'\x8f')  # all elements got removed but line is target of a branch: add REM
+            else:
+              return bytearray()  # empty line that's not target of a branch: just ignore
         out.extend(b'\00')
         return out
 
@@ -377,11 +388,13 @@ class Program:
             self.lines.append(Line(line_data))
             curoff += len(line_data) + 3
 
-    def get_bytes(self):
+    def get_bytes(self, branch_table=[]):
         outprg = bytearray([self.startaddr & 255, (self.startaddr >> 8) & 255])
         curadr = self.startaddr
         for line in self.lines:
-            line_bytes = line.get_bytes()
+            line_bytes = line.get_bytes(branch_table)
+            if len(line_bytes) == 0:
+                continue
             curadr += len(line_bytes) + 2
             outprg.append(curadr & 255)
             outprg.append((curadr >> 8) & 255)
@@ -802,7 +815,7 @@ if os.path.isfile("labels.csv"):
 input_program = Program(inprg)
 branch_table, doc_html = analyze_program(input_program)
 crank_the_print(input_program, branch_table)
-outprg = input_program.get_bytes()
+outprg = input_program.get_bytes(branch_table)
 with open(output_file, "wb") as outfile:
     outfile.write(outprg)
 with open(output_html_file, "w") as outfile:
