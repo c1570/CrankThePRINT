@@ -21,7 +21,7 @@ helper_addr = 0xce00
 
 
 def line_whitelisted(number):
-    return (number < 502 or number > 532) and (number not in [210])
+    return (number < 502 or number > 532)
 
 
 TOKENS = ["END", "FOR", "NEXT", "DATA", "INPUT", "INPUT#", "DIM", "READ",
@@ -188,10 +188,13 @@ def get_var_branch_info(data: bytearray, branch_targets: list = [], jump_sources
     line_number = data[0] + (data[1] << 8)
     var_name = bytearray()
     branch_target = bytearray()
+    line_title = labels["sub"].get(str(line_number), "")
+    if line_title != "":
+        line_title = line_title + "&#10;"
     j_sources = "&#10;".join([f"GOTO from {j}" if j >= 0 else f"GOSUB from {abs(j)}" for j in jump_sources]) if jump_sources is not None else ""
     is_subroutine = min(jump_sources) < 0 if jump_sources is not None and len(jump_sources) > 0 else False
     line_number_style = "color: green" if is_subroutine else ("color: grey" if jump_sources is not None and len(jump_sources) > 0 else "")
-    html = f"<div class='fontc64' id='line_{line_number}'><span title='{j_sources}' style='{line_number_style}'>{line_number}</span> "
+    html = f"<div class='fontc64' id='line_{line_number}'><span title='{line_title}{j_sources}' style='{line_number_style}'>{line_number}</span> "
     def get_var_id(var_name):
         return "var_" + var_name.replace(" ", "_").replace("$", "str").replace("%", "int").replace("(", "arr")
     def add_var_name_to_html():
@@ -202,15 +205,17 @@ def get_var_branch_info(data: bytearray, branch_targets: list = [], jump_sources
             var_name.clear()
             global labels
             var_id = get_var_id(var_label)
-            var_title = labels.get(var_label, "")
-            #print(f"var,{var_label},")
+            var_title = labels["var"].get(var_label, "")
+            #if var_title == "":
+            #    print(f"var,{var_label},")
             html = html + f"<span class='{var_id}' title='{var_title}' onclick='highlightClass(\"{var_id}\")'>{var_label}</span>"
     def add_branch_target_to_html():
         nonlocal html, in_gosub
         if len(branch_target) > 0:
             target = int(branch_target.decode('ascii'))
             #print(f"Branch target: {target}")
-            html = html + f"<a href='#line_{target}'>{target}</a>"
+            branch_title = labels["sub"].get(str(target), "")
+            html = html + f"<a href='#line_{target}' title='{branch_title}'>{target}</a>"
             if in_gosub:
                 target = -target
             branch_targets.append(target)
@@ -245,7 +250,7 @@ def get_var_branch_info(data: bytearray, branch_targets: list = [], jump_sources
         if not in_quotes and not in_data and not in_rem and c > 127:
             if c == 137 and not starting_token == 145:  # GOTO but not ON...GOTO
                 line_contains_unconditional_branch = True
-            if c == 142:  # RETURN
+            if c in [128, 142]:  # END, RETURN
                 line_contains_unconditional_branch = True
             if starting_token == -1:
                 starting_token = c
@@ -806,12 +811,13 @@ def crank_the_print(program: Program, branch_table: dict):
 
 with open(input_file, "rb") as infile:
     inprg = bytes(infile.read())
-labels = {}
+labels = {"var": {}, "sub": {}}
 if os.path.isfile("labels.csv"):
     with open("labels.csv", newline="") as csvfile:
         csvreader = csv.reader(csvfile, delimiter=',')
         for row in csvreader:
-            labels[row[1]] = row[2]
+            if row[2] != "":
+                labels[row[0]][row[1]] = row[2]
 input_program = Program(inprg)
 branch_table, doc_html = analyze_program(input_program)
 crank_the_print(input_program, branch_table)
