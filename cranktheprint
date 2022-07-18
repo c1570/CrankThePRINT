@@ -24,7 +24,7 @@ def line_whitelisted(number):
     return (number < 502 or number > 532)
 
 
-TOKENS = ["END", "FOR", "NEXT", "DATA", "INPUT", "INPUT#", "DIM", "READ",
+TOKENS = ["END", "FOR", "NEXT", "DATA", "INPUT#", "INPUT", "DIM", "READ",
           "LET", "GOTO", "RUN", "IF", "RESTORE", "GOSUB", "RETURN", "REM",
           "STOP", "ON", "WAIT", "LOAD", "SAVE", "VERIFY", "DEF", "POKE",
           "PRINT#", "PRINT", "CONT", "LIST", "CLR", "CMD", "SYS", "OPEN",
