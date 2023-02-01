@@ -12,7 +12,9 @@ CtP processes a C64 BASIC V2 PRG file, extracts PRINT constants, converts them t
 and replaces PRINTs in the code by SYS commands that do the same thing the PRINTs did, but faster:
 Printing those 39 characters mentioned above will take CtP about 1500 cycles².
 
-The result is very compiler friendly, so do put CtP's result code through some BASIC compiler such as [Blitz](https://csdb.dk/release/?id=173267) for additional speed.
+The result is very compiler friendly, so do put CtP's result code through some BASIC compiler such as [Reblitz64](https://github.com/c1570/Reblitz64) for additional speed.
+
+Impatient? Have a look at [run_tests.sh](run_tests.sh).
 
 * CtP supports a simple PRINT AT variant (a very short SYS helper), too. See [tests.txt](tests.txt) to get an idea how it works.
 * CtP tries to combine consecutive PRINT commands.

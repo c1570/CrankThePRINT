@@ -11,6 +11,10 @@
   906 print"strings that go together so only"
   907 print"one sys command gets generated"
   908 print"even for long strings such as this."
+  909 print" press return after"
+  910 print" each test."
+  910 print"ctp output has to match"
+  911 print"pure basic output."
 
  1000 rem"convert abs non-cr lines into one string
  1000 sysq,28,7,"{rvon}{grn}{CBM--}{lgrn}  ";
